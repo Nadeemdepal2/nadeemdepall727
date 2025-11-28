@@ -103,13 +103,26 @@ jobs:
         run: |
           $extPackUrl = "https://download.virtualbox.org/virtualbox/7.2.4/Oracle_VM_VirtualBox_Extension_Pack-7.2.4.vbox-extpack"
           $extPackPath = "C:\Users\Administrator\Desktop\Public\Oracle_VM_VirtualBox_Extension_Pack-7.2.4.vbox-extpack"
-          Invoke-WebRequest -Uri $extPackUrl -OutFile $extPackPath -UseBasicParsing
+          Write-Host "Checking availability of extension pack: $extPackUrl"
+          $head = Invoke-WebRequest -Uri $extPackUrl -Method Head -UseBasicParsing -ErrorAction SilentlyContinue
+          if ($head -and $head.StatusCode -eq 200) {
+              Write-Host "Extension pack found, downloading to $extPackPath"
+              Invoke-WebRequest -Uri $extPackUrl -OutFile $extPackPath -UseBasicParsing -ErrorAction Stop
+          } else {
+              Write-Warning "Extension pack not found at $extPackUrl (Status: $($head.StatusCode -as [string])) - skipping download and install."
+              Remove-Item -Path $extPackPath -ErrorAction SilentlyContinue
+          }
 
       - name: Install VirtualBox Extension Pack
         run: |
+          $extPackPath = "C:\Users\Administrator\Desktop\Public\Oracle_VM_VirtualBox_Extension_Pack-7.2.4.vbox-extpack"
+          if (-not (Test-Path $extPackPath)) {
+              Write-Warning "Extension pack not available at $extPackPath - skipping installation."
+              exit 0
+          }
           $vboxManage = "${env:ProgramFiles}\Oracle\VirtualBox\VBoxManage.exe"
           # Non-interactively accept the extension pack license by piping 'y' into the installer
-          'y' | & $vboxManage extpack install --replace "C:\Users\Administrator\Desktop\Public\Oracle_VM_VirtualBox_Extension_Pack-7.2.4.vbox-extpack"
+          'y' | & $vboxManage extpack install --replace $extPackPath
 
       - name: Maintain RDP Connection
         run: |
