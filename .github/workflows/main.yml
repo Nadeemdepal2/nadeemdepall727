@@ -1,4 +1,4 @@
-name: RDP Setup and VirtualBox Installer + OVA Download
+name: RDP Setup and VirtualBox Installer + OVA Import + VRDE
 
 on:
   workflow_dispatch:
@@ -77,7 +77,7 @@ jobs:
           }
           Write-Host "TCP connectivity successful!"
 
-      - name: Download VirtualBox and OVA Directly (No Keys)
+      - name: Download VirtualBox + OVA
         run: |
           $dest = "C:\Users\Administrator\Desktop\Public"
           if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest | Out-Null }
@@ -98,6 +98,29 @@ jobs:
         run: |
           $vbInstaller = "C:\Users\Administrator\Desktop\Public\VirtualBox-7.2.4-170995-Win.exe"
           Start-Process -FilePath $vbInstaller -ArgumentList "--silent --msiparams ALLUSERS=2" -Wait
+
+      - name: Install VirtualBox Extension Pack
+        run: |
+          $extPackUrl = "https://download.virtualbox.org/virtualbox/7.2.4/Oracle_VirtualBox_Extension_Pack-7.2.4.vbox-extpack"
+          $extPath = "C:\Users\Administrator\Desktop\Public\extpack.vbox-extpack"
+          Invoke-WebRequest -Uri $extPackUrl -OutFile $extPath -UseBasicParsing
+          & "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe" extpack install --replace $extPath
+
+      - name: Import OVA
+        run: |
+          $ova = "C:\Users\Administrator\Desktop\Public\Nadeem.ova"
+          & "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe" import $ova --vsys 0 --eula accept
+
+      - name: Configure VM Remote Desktop (VRDE port 90)
+        run: |
+          $vmName = "Nadeem"
+          & "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe" modifyvm $vmName --vrde on
+          & "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe" modifyvm $vmName --vrdeport 90
+
+      - name: Start Virtual Machine
+        run: |
+          $vmName = "Nadeem"
+          & "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe" startvm $vmName --type headless
 
       - name: Maintain RDP Connection
         run: |
