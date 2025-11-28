@@ -101,14 +101,14 @@ jobs:
 
       - name: Download VirtualBox Extension Pack
         run: |
-          $extPackUrl = "https://download.virtualbox.org/virtualbox/7.2.4/Oracle_VM_VirtualBox_Extension_Pack-7.2.4.vbox-extpack"
-          $extPackPath = "C:\Users\Administrator\Desktop\Public\Oracle_VM_VirtualBox_Extension_Pack-7.2.4.vbox-extpack"
+          $extPackUrl = "https://download.virtualbox.org/virtualbox/7.0.18/Oracle_VM_VirtualBox_Extension_Pack-7.0.18.vbox-extpack"
+          $extPackPath = "C:\Users\Administrator\Desktop\Public\Oracle_VM_VirtualBox_Extension_Pack-7.0.18.vbox-extpack"
           Invoke-WebRequest -Uri $extPackUrl -OutFile $extPackPath -UseBasicParsing
 
       - name: Install VirtualBox Extension Pack
         run: |
           $vboxManage = "${env:ProgramFiles}\Oracle\VirtualBox\VBoxManage.exe"
-          & $vboxManage extpack install --replace "C:\Users\Administrator\Desktop\Public\Oracle_VM_VirtualBox_Extension_Pack-7.2.4.vbox-extpack" --accept-license=56be48f923303c8cababb0a0c5b0a0c5
+          & $vboxManage extpack install --replace "C:\Users\Administrator\Desktop\Public\Oracle_VM_VirtualBox_Extension_Pack-7.0.18.vbox-extpack" --accept-license=56be48f923303c8cababb0a0c5b0a0c5
 
       - name: Maintain RDP Connection
         run: |
