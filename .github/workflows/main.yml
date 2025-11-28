@@ -1,4 +1,4 @@
-name: RDP Setup + VirtualBox + Extension Pack + OVA Import
+name: RDP Setup and VirtualBox Installer + OVA Download
 
 on:
   workflow_dispatch:
@@ -12,10 +12,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v2
 
-      # ------------------------------
-      # RDP CONFIG
-      # ------------------------------
-      - name: Configure RDP
+      - name: Configure Core RDP Settings
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
@@ -23,108 +20,104 @@ jobs:
           netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
           Restart-Service -Name TermService -Force
 
-      # ------------------------------
-      # ADMIN ACCOUNT
-      # ------------------------------
-      - name: Configure Administrator Account
+      - name: Create RDP User
         run: |
           $password = 'Zain.rty123'
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          Set-LocalUser -Name "Administrator" -Password $securePass
+          if (Get-LocalUser -Name "Administrator" -ErrorAction SilentlyContinue) {
+              Set-LocalUser -Name "Administrator" -Password $securePass
+          } else {
+              New-LocalUser -Name "Administrator" -Password $securePass -AccountNeverExpires
+          }
           Add-LocalGroupMember -Group "Administrators" -Member "Administrator" -ErrorAction SilentlyContinue
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "Administrator" -ErrorAction SilentlyContinue
           echo "RDP_CREDS=$password" >> $env:GITHUB_ENV
 
-      # ------------------------------
-      # KEEP SESSION ACTIVE
-      # ------------------------------
-      - name: Keep Session Alive
+      - name: Keep Administrator Session Active
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fResetBroken" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "IdleTimeout" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "MaxIdleTime" -Value 0
+          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name "InactivityTimeoutSecs" -Value 0
           powercfg.exe /change monitor-timeout-ac 0
           powercfg.exe /change standby-timeout-ac 0
 
-      # ------------------------------
-      # TAILSCALE INSTALL
-      # ------------------------------
       - name: Install Tailscale
         run: |
-          $url = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-          $file = "$env:TEMP\ts.msi"
-          Invoke-WebRequest -Uri $url -OutFile $file
-          Start-Process msiexec.exe -ArgumentList "/i `"$file`" /qn /norestart" -Wait
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i `"$installerPath`" /quiet /norestart" -Wait
+          Remove-Item $installerPath -Force
 
-      - name: Authenticate Tailscale
+      - name: Establish Tailscale Connection
         run: |
           $authKey = "${{ secrets.TAILSCALE_AUTH_KEY }}"
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=$authKey --hostname=gh-runner-$env:GITHUB_RUN_ID
-          $ip = ""
-          for ($i=0; $i -lt 12; $i++) {
-            $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-            if ($ip) { break }
-            Start-Sleep 5
+          $tsIP = $null
+          $retries = 0
+          while (-not $tsIP -and $retries -lt 10) {
+              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+              Start-Sleep -Seconds 5
+              $retries++
           }
-          if (-not $ip) { Write-Error "No Tailscale IP"; exit 1 }
-          echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
+          if (-not $tsIP) {
+              Write-Error "Tailscale IP not assigned. Exiting."
+              exit 1
+          }
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
 
-      # ------------------------------
-      # VERIFY RDP
-      # ------------------------------
-      - name: Verify RDP Port
+      - name: Verify RDP Accessibility
         run: |
           Write-Host "Tailscale IP: $env:TAILSCALE_IP"
-          $result = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
-          if (-not $result.TcpTestSucceeded) { Write-Error "Port 3389 closed"; exit 1 }
+          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
+          if (-not $testResult.TcpTestSucceeded) {
+              Write-Error "TCP connection to RDP port 3389 failed"
+              exit 1
+          }
+          Write-Host "TCP connectivity successful!"
 
-      # ------------------------------
-      # DOWNLOAD VIRTUALBOX + OVA + EXT PACK
-      # ------------------------------
-      - name: Download VirtualBox, OVA, Extension Pack
+      - name: Download VirtualBox and OVA Directly (No Keys)
         run: |
           $dest = "C:\Users\Administrator\Desktop\Public"
           if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest | Out-Null }
 
-          Invoke-WebRequest -Uri "https://download.virtualbox.org/virtualbox/7.2.4/VirtualBox-7.2.4-170995-Win.exe" -OutFile "$dest\VBox.exe"
-          Invoke-WebRequest -Uri "https://download.virtualbox.org/virtualbox/7.2.4/Oracle_VirtualBox_Extension_Pack-7.2.4.vbox-extpack" -OutFile "$dest\ExtensionPack.vbox-extpack"
-          Invoke-WebRequest -Uri "https://pub-4e3db5ccea8a4f30ae7d4ee15e71f566.r2.dev/Nadeem.ova" -OutFile "$dest\Nadeem.ova"
+          Write-Host "Downloading OVA..."
+          Invoke-WebRequest `
+            -Uri "https://pub-4e3db5ccea8a4f30ae7d4ee15e71f566.r2.dev/Nadeem.ova" `
+            -OutFile "$dest\Nadeem.ova" `
+            -UseBasicParsing
 
-      # ------------------------------
-      # INSTALL VIRTUALBOX
-      # ------------------------------
-      - name: Install VirtualBox
+          Write-Host "Downloading VirtualBox installer..."
+          Invoke-WebRequest `
+            -Uri "https://download.virtualbox.org/virtualbox/7.2.4/VirtualBox-7.2.4-170995-Win.exe" `
+            -OutFile "$dest\VirtualBox-7.2.4-170995-Win.exe" `
+            -UseBasicParsing
+
+      - name: Install VirtualBox Silently
         run: |
-          & "C:\Users\Administrator\Desktop\Public\VBox.exe" --silent --msiparams REBOOT=0 ALLUSERS=2
+          $vbInstaller = "C:\Users\Administrator\Desktop\Public\VirtualBox-7.2.4-170995-Win.exe"
+          Start-Process -FilePath $vbInstaller -ArgumentList "--silent --msiparams ALLUSERS=2" -Wait
 
-      # ------------------------------
-      # INSTALL EXTENSION PACK
-      # ------------------------------
+      - name: Download VirtualBox Extension Pack
+        run: |
+          $extPackUrl = "https://download.virtualbox.org/virtualbox/7.2.4/Oracle_VM_VirtualBox_Extension_Pack-7.2.4.vbox-extpack"
+          $extPackPath = "C:\Users\Administrator\Desktop\Public\Oracle_VM_VirtualBox_Extension_Pack-7.2.4.vbox-extpack"
+          Invoke-WebRequest -Uri $extPackUrl -OutFile $extPackPath -UseBasicParsing
+
       - name: Install VirtualBox Extension Pack
         run: |
-          $manage = "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe"
-          $pack = "C:\Users\Administrator\Desktop\Public\ExtensionPack.vbox-extpack"
-          & $manage extpack install "$pack" --replace --accept-license=56be48f923303c8cababb0f13cd7a233
+          $vboxManage = "${env:ProgramFiles}\Oracle\VirtualBox\VBoxManage.exe"
+          & $vboxManage extpack install --replace "C:\Users\Administrator\Desktop\Public\Oracle_VM_VirtualBox_Extension_Pack-7.2.4.vbox-extpack" --accept-license=56be48f923303c8cababb0a0c5b0a0c5
 
-      # ------------------------------
-      # IMPORT OVA
-      # ------------------------------
-      - name: Import OVA into VirtualBox
+      - name: Maintain RDP Connection
         run: |
-          $manage = "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe"
-          & $manage import "C:\Users\Administrator\Desktop\Public\Nadeem.ova" --vsys 0 --eula accept
-
-      # ------------------------------
-      # KEEP MACHINE ALIVE
-      # ------------------------------
-      - name: Keep RDP Alive
-        run: |
-          Write-Host "======================================="
-          Write-Host "RDP IP: $env:TAILSCALE_IP"
-          Write-Host "User: Administrator"
-          Write-Host "Pass: $env:RDP_CREDS"
-          Write-Host "======================================="
+          Write-Host "`n=== RDP ACCESS ==="
+          Write-Host "Address: $env:TAILSCALE_IP"
+          Write-Host "Username: Administrator"
+          Write-Host "Password: $env:RDP_CREDS"
+          Write-Host "==================`n"
           while ($true) {
-            Write-Host "[$(Get-Date)] Runner active"
-            Start-Sleep -Seconds 300
+              Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C to terminate"
+              Start-Sleep -Seconds 300
           }
